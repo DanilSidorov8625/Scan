@@ -1,0 +1,45 @@
+{
+  "forms": [
+    {
+      "id": "inbound",
+      "title": "Inbound Form",
+      "subtitle": "Enter the inbound barcode",
+      "handleDuplicateKey": "error",
+      "fields": [
+        {
+          "id": "parcelBarcode",
+          "label": "Inbound Barcode",
+          "placeholder": "Enter inbound barcode",
+          "minLength": 5,
+          "maxLength": 20,
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "location",
+      "title": "Location Form",
+      "subtitle": "parcel and location barcodes",
+      "handleDuplicateKey": "update",
+      "handleIdenticalFields": "error",
+      "fields": [
+        {
+          "id": "parcelBarcode",
+          "label": "Parcel Barcode",
+          "placeholder": "Enter parcel barcode",
+          "minLength": 5,
+          "maxLength": 20,
+          "required": true
+        },
+        {
+          "id": "parcelLocation",
+          "label": "Location Barcode",
+          "placeholder": "Enter location barcode",
+          "minLength": 5,
+          "maxLength": 20,
+          "required": true
+        }
+      ]
+    }
+  ]
+}

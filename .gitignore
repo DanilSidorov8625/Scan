@@ -1,0 +1,71 @@
+# ======================================
+# OS / Editor / Global stuff
+# ======================================
+.DS_Store
+*.log
+*.pyc
+*.swp
+__pycache__/
+.env
+*.env
+*.sqlite3
+
+# ======================================
+# FRONTEND: React Native (Expo or CLI)
+# ======================================
+# Node modules
+frontend/node_modules/
+
+# iOS
+frontend/ios/build/
+frontend/ios/Pods/
+frontend/ios/Podfile.lock
+frontend/ios/Podfile
+frontend/ios/DerivedData/
+
+# Android
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/.idea/
+frontend/android/local.properties
+
+# Expo
+frontend/.expo/
+frontend/.expo-shared/
+
+# Metro cache
+frontend/.metro-cache/
+frontend/babel.config.js
+
+# Misc
+frontend/package-lock.json
+frontend/yarn.lock
+
+# ======================================
+# BACKEND: Flask
+# ======================================
+# Byte-compiled files
+backend/__pycache__/
+backend/*.pyc
+
+# Env/Secrets
+backend/.env
+
+# Virtual env (if inside backend folder)
+backend/venv/
+backend/env/
+
+# Flask cache/db
+backend/instance/
+backend/*.sqlite3
+
+# Migrations (optional, if using Flask-Migrate)
+backend/migrations/
+
+# ======================================
+# Optional: VS Code
+# ======================================
+.vscode/
+
+
