@@ -42,6 +42,9 @@ frontend/babel.config.js
 frontend/package-lock.json
 frontend/yarn.lock
 
+# Drizzle
+frontend/drizzle/
+
 # ======================================
 # BACKEND: Flask
 # ======================================
