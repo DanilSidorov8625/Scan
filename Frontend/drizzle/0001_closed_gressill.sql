@@ -1,1 +1,0 @@
-ALTER TABLE `scans` ADD `key` text NOT NULL;

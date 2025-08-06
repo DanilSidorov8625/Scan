@@ -58,6 +58,7 @@ backend/.env
 # Virtual env (if inside backend folder)
 backend/venv/
 backend/env/
+backend/.venv/
 
 # Flask cache/db
 backend/instance/
