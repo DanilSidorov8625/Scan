@@ -3,6 +3,7 @@ import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 
 db  = SQLAlchemy()
 jwt = JWTManager()
@@ -28,6 +29,10 @@ def create_app():
     # init extensions
     db.init_app(app)
     jwt.init_app(app)
+    CORS(app, 
+         origins=["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006"],
+         allow_headers=["Content-Type", "Authorization"],
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
     # register routes
     from .routes import bp as routes_bp

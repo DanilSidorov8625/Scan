@@ -1,22 +1,21 @@
-import { useRouter } from "expo-router";
-import { useEffect } from "react";
+// src/screens/Index.js
+import React, { useEffect } from 'react';
+import { useRouter } from 'expo-router';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Index() {
   const router = useRouter();
+  const { isAuthenticated, loading } = useAuth();
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      const isAuthenticated = false;
-
-      if (!isAuthenticated) {
-        router.replace("/forms");
+    if (!loading) {
+      if (isAuthenticated) {
+        router.replace('/forms');
       } else {
-        router.replace("/login");
+        router.replace('/login');
       }
-    }, 100); // 100ms delay is usually safe
-
-    return () => clearTimeout(timeout);
-  }, [router]);
+    }
+  }, [loading, isAuthenticated, router]);
 
   return null;
 }

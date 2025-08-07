@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import migrations from '../drizzle/migrations';
+import { AuthProvider } from '../contexts/AuthContext';
 
 export const DATABASE_NAME = 'scans.db';
 const expoDb = openDatabaseSync(DATABASE_NAME);
@@ -44,22 +45,24 @@ export default function RootLayout() {
   }
 
   return (
-    <Suspense
-      fallback={
-        <View style={styles.fullCenter}>
-          <ActivityIndicator size="large" />
-        </View>
-      }
-    >
-      <SQLiteProvider
-        databaseName={DATABASE_NAME}
-        openDatabase={openDatabaseSync}
-        options={{ enableChangeListener: true }}
-        useSuspense
+    <AuthProvider>
+      <Suspense
+        fallback={
+          <View style={styles.fullCenter}>
+            <ActivityIndicator size="large" />
+          </View>
+        }
       >
-        <Slot />
-      </SQLiteProvider>
-    </Suspense>
+          <SQLiteProvider
+            databaseName={DATABASE_NAME}
+            openDatabase={openDatabaseSync}
+            options={{ enableChangeListener: true }}
+            useSuspense
+          >
+            <Slot />
+          </SQLiteProvider>
+      </Suspense>
+    </AuthProvider>
   );
 }
 

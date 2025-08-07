@@ -17,11 +17,13 @@ import {
 import formsConfig from '../../../config/forms.json';
 import { scans } from '../../../db/schema';
 import { generateId } from '../../../utils/generateID';
-import { playSound } from '../../../utils/playSound'; // ← import the sound util
+import { playSound } from '../../../utils/playSound';
 import { makeZodSchema } from '../../../utils/zodSchemaBuilder';
+import { useAuth } from '../../../contexts/AuthContext';
 
 export default function DynamicFormScreen() {
   const router = useRouter();
+  const { token, logout } = useAuth();
   const { formId } = useLocalSearchParams();
   const form = formsConfig.forms.find(f => f.id === formId);
   const schema = form ? makeZodSchema(form) : null;
@@ -77,6 +79,35 @@ export default function DynamicFormScreen() {
     const first = form.fields[0].id;
     setFocused(first);
     setTimeout(() => refs.current[first]?.focus(), 50);
+  };
+
+
+  const postScanToAPI = async record => {
+    try {
+      const response = await fetch('http://127.0.0.1:5000/scan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(record),
+      });
+
+      if (response.status === 401) {
+        logout();
+        return;
+      }
+
+      if (response.ok) {
+        drizzleDb
+          .update(scans)
+          .set({ synced: 1 })
+          .where(eq(scans.id, record.id))
+          .run();
+      }
+    } catch (err) {
+      console.error('Background scan sync failed:', err);
+    }
   };
 
   const handleSubmit = async newVals => {
@@ -137,6 +168,7 @@ export default function DynamicFormScreen() {
       }
       else {
         drizzleDb.insert(scans).values(record).run();
+        postScanToAPI(record);
       }
       setMessage({ text: `${firstValue} Saved!`, type: 'success' });
       resetForm();

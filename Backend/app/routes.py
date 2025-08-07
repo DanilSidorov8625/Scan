@@ -62,16 +62,18 @@ def scan():
         formId    = formId,
         data       = data,
         key        = key,
-        scannedAt = scannedAt
+        scannedAt = scannedAt,
+        synced = 1
     )
     try:
         db.session.add(scan)
         db.session.commit()
-    except Exception:
+        return jsonify(message="Scan created successfully", scanId=scan.id), 201
+    except Exception as e:
         db.session.rollback()
+        print("❌ DB error:", repr(e))   # ← ADD THIS
         return jsonify(error="Failed to create scan"), 500
 
-    return jsonify(scan_id=scan.id), 201
 
 
 @bp.route("/export", methods=["GET"])

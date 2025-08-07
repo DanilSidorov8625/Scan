@@ -4,9 +4,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { useSQLiteContext } from 'expo-sqlite';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   SafeAreaView,
   ScrollView,
@@ -20,7 +21,7 @@ import { scans } from '../../../db/schema';
 
 export default function ExportList() {
   const db = useSQLiteContext();
-  const drizzleDb = drizzle(db);
+  const drizzleDb = useMemo(() => drizzle(db), [db]);
 
   const [selectedFormId, setSelectedFormId] = useState(formsConfig.forms[0]?.id || '');
   const [rows, setRows] = useState([]);
@@ -39,6 +40,7 @@ export default function ExportList() {
       setRows(results);
     }, [selectedFormId])
   );
+
 
   const form = formsConfig.forms.find(f => f.id === selectedFormId);
 
@@ -110,8 +112,21 @@ export default function ExportList() {
 // Dynamically renders one scan row:
 function ScanItem({ row, form }) {
   const data = JSON.parse(row.data);
+  
+  const getSyncBorderColor = () => {
+    return row.synced === 0 ? '#ef4444' : '#22c55e'; // red for unsynced, green for synced
+  };
+  
+  const showSyncStatus = () => {
+    const status = row.synced === 0 ? 'Not Synced' : 'Synced';
+    const message = row.synced === 0 
+      ? 'This scan has not been synchronized to the server yet.' 
+      : 'This scan has been successfully synchronized to the server.';
+    Alert.alert(status, message);
+  };
+  
   return (
-    <View style={styles.scanItem}>
+    <TouchableOpacity style={[styles.scanItem, { borderColor: getSyncBorderColor(), borderWidth: 2 }]} onPress={showSyncStatus}>
       {form.fields.map(field => (
         <View key={field.id} style={styles.scanFieldRow}>
           <Text style={[styles.scanFieldLabel, { color: '#3b82f6' }]}>{field.label}:</Text>
@@ -121,7 +136,7 @@ function ScanItem({ row, form }) {
       <Text style={styles.scanTimestamp}>
         at {new Date(row.scannedAt).toLocaleTimeString()}
       </Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -153,9 +168,9 @@ const styles = StyleSheet.create({
   // ScanItem styles
   scanItem: {
     padding: 16,
-    borderBottomColor: '#eee',
-    borderBottomWidth: 1,
-    marginBottom: 8,
+    marginBottom: 12,
+    borderRadius: 10,
+    backgroundColor: '#fff',
   },
   scanFieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   scanFieldLabel: { color: '#555', fontWeight: '500' },
