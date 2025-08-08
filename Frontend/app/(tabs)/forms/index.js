@@ -17,7 +17,7 @@ export default function Index() {
           <TouchableOpacity
             key={form.id}
             style={styles.button}
-            onPress={() => router.push(`/forms/dynamic?formId=${form.id}`)}
+            onPress={() => router.push(`/forms/${form.id}`)}
           >
             <Text style={styles.buttonText}>{form.title}</Text>
           </TouchableOpacity>

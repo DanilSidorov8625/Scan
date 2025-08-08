@@ -1,48 +1,41 @@
-# app/routes.py
 from __future__ import annotations
 
 import re
+import os
+import csv
+import json
+import base64
+import hmac
+import hashlib
+import secrets
+from datetime import datetime, timedelta
+
 from email_validator import validate_email, EmailNotValidError
-from flask           import Blueprint, jsonify, request, current_app
-from datetime        import datetime
+from flask import Blueprint, jsonify, request, current_app, send_from_directory, abort
 from flask_jwt_extended import (
     create_access_token,
     jwt_required,
     get_jwt_identity,
 )
-from flask_limiter          import Limiter
-from flask_limiter.util     import get_remote_address
-from sqlalchemy.exc         import SQLAlchemyError, IntegrityError
-
-import os
-import csv
-import json
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from werkzeug.utils import secure_filename
 import resend
-import base64
 
 
 
-from .models import db, User, Email
 
-bp = Blueprint("api", __name__, url_prefix="/api")
+from .models import db, User, Email, PasswordResetToken, Export
+from . import limiter as app_limiter  # use the Limiter initialized in __init__
 
-
-EXPORT_FOLDER = os.path.join(os.getcwd(), "savedExports")
-os.makedirs(EXPORT_FOLDER, exist_ok=True)
-
-
-# --------------------------------------------------------------------------- #
-# Rate-limiter (limits per client IP)                                         #
-# --------------------------------------------------------------------------- #
-limiter = Limiter(key_func=get_remote_address, default_limits=["200/hour"])
-limiter.limit("10 per minute")(bp)
+bp = Blueprint("api", __name__)
 
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 def _json_error(message: str, code: int = 400):
     return jsonify(error=message), code
-
 
 def _get_json():
     """Try JSON first, then form data."""
@@ -51,6 +44,39 @@ def _get_json():
         data = request.form.to_dict()
     return data or {}
 
+def _csv_safe(value):
+    """Mitigate CSV injection: prefix dangerous leading chars with a single quote."""
+    if value is None:
+        return ""
+    s = str(value)
+    if s[:1] in ("=", "+", "-", "@"):
+        return "'" + s
+    return s
+
+def _save_payload_json(export_id: str, payload: dict) -> str:
+    folder = _export_folder()
+    path = os.path.join(folder, f"{export_id}.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return path
+
+def encode_attachment(file_path):
+    with open(file_path, "rb") as f:
+        content = f.read()
+        return {
+            "filename": os.path.basename(file_path),
+            "content": base64.b64encode(content).decode("utf-8"),
+        }
+
+def _hash_token(raw: str) -> str:
+    key = (current_app.config.get("SECRET_KEY") or "").encode("utf-8")
+    return hmac.new(key, raw.encode("utf-8"), hashlib.sha256).hexdigest()
+
+def _export_folder() -> str:
+    # Resolve to instance/savedExports at runtime (needs app context)
+    folder = os.path.join(current_app.instance_path, "savedExports")
+    os.makedirs(folder, exist_ok=True)
+    return folder
 
 # --------------------------------------------------------------------------- #
 # Health check                                                                #
@@ -59,12 +85,11 @@ def _get_json():
 def health():
     return jsonify(status="ok"), 200
 
-
 # --------------------------------------------------------------------------- #
 # Registration                                                                #
 # --------------------------------------------------------------------------- #
 @bp.route("/register", methods=["POST"])
-@limiter.limit("10/hour")            # slow down bots
+@app_limiter.limit("10/hour")
 def register():
     payload = _get_json()
     username = (payload.get("username") or "").strip()
@@ -84,18 +109,17 @@ def register():
     except IntegrityError:
         db.session.rollback()
         return _json_error("Username already taken.", 409)
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         db.session.rollback()
-        return _json_error(f"DB error: {e}", 500)
+        return _json_error("Database error.", 500)
 
     return jsonify(message="registered"), 201
-
 
 # --------------------------------------------------------------------------- #
 # Login                                                                       #
 # --------------------------------------------------------------------------- #
 @bp.route("/login", methods=["POST"])
-@limiter.limit("30/hour")
+@app_limiter.limit("30/hour")
 def login():
     payload  = _get_json()
     username = payload.get("username", "").strip()
@@ -108,33 +132,93 @@ def login():
     token = create_access_token(identity=str(user.id))
     return jsonify(access_token=token), 200
 
-
-
 # --------------------------------------------------------------------------- #
-# User management                                                             #
+# User management (only reset password implemented)                           #
 # --------------------------------------------------------------------------- #
-@bp.route("/reset-password", methods=["POST"])
-@jwt_required()
-def reset_password():
-    return _json_error("Reset password feature not implemented yet.", 501)
+@bp.route("/reset-password/request", methods=["POST"])
+@app_limiter.limit("5/hour")
+def reset_password_request():
+    payload = _get_json()
+    identifier = (payload.get("username") or payload.get("email") or "").strip()
+    if not identifier:
+        return _json_error("username or email required.", 400)
 
+    # Lookup by username or email
+    user = User.query.filter_by(username=identifier).first()
+    if not user:
+        email_rec = Email.query.filter_by(email=identifier).first()
+        user = email_rec.user if email_rec else None
 
-# WILL NOT PUT IN MVP YET
-@bp.route("/user-info", methods=["GET"])
-# GET user info, like username, "tokens", etc.
-@jwt_required()
-def user_info():
-    return _json_error("User info feature not implemented yet.", 501)
+    # Always respond success to avoid enumeration
+    if not user:
+        return jsonify(message="If the account exists, a reset email has been sent."), 200
 
-@bp.route("/addTokens", methods=["POST"])
-@jwt_required()
-def add_tokens():
-    return _json_error("Add tokens feature not implemented yet.", 501)
+    active_email = Email.query.filter_by(user_id=user.id, is_active=True).first()
+    if not active_email:
+        return jsonify(message="If the account exists, a reset email has been sent."), 200
 
-@bp.route("/deleteAccount", methods=["DELETE"])
-@jwt_required()
-def delete_account():
-    return _json_error("Delete account feature not implemented yet.", 501)
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_token(raw_token)
+    ttl = int(current_app.config["PASSWORD_RESET_TOKEN_TTL"])
+    expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+
+    try:
+        prt = PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at)
+        db.session.add(prt)
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        # Avoid enumeration patterns
+        return jsonify(message="If the account exists, a reset email has been sent."), 200
+
+    # Send email
+    try:
+        reset_link = f"http://127.0.0.1:5000/reset?token={raw_token}"
+        params: resend.Emails.SendParams = {
+            "from": "Scan App <noreply@scans.omnaris.xyz>",
+            "to": active_email.email,
+            "subject": "Reset your Scan App password",
+            "html": (
+                f"<p>Use this link to reset your password (valid for {ttl//60} minutes):</p>"
+                f"<p><a href='{reset_link}'>{reset_link}</a></p>"
+            ),
+        }
+        resend.Emails.send(params)
+    except Exception:
+        current_app.logger.exception("Failed to send reset email")
+        # Still avoid leaking details
+        pass
+
+    return jsonify(message="If the account exists, a reset email has been sent."), 200
+
+@bp.route("/reset-password/confirm", methods=["POST"])
+@app_limiter.limit("10/hour")
+def reset_password_confirm():
+    payload = _get_json()
+    raw_token = (payload.get("token") or "").strip()
+    new_password = (payload.get("new_password") or "").strip()
+
+    if len(new_password) < 6 or len(new_password) > 128:
+        return _json_error("Password must be between 6 and 128 characters.", 400)
+    if not raw_token:
+        return _json_error("Token required.", 400)
+
+    token_hash = _hash_token(raw_token)
+
+    try:
+        prt = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
+        if not prt or not prt.is_valid():
+            return _json_error("Invalid or expired token.", 400)
+
+        user = prt.user
+        user.set_password(new_password)
+        prt.used_at = datetime.utcnow()
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return _json_error("Failed to reset password.", 500)
+
+    return jsonify(message="Password updated."), 200
 
 # --------------------------------------------------------------------------- #
 # Email management                                                            #
@@ -159,10 +243,9 @@ def get_emails():
         ]
     ), 200
 
-
 @bp.route("/emails", methods=["POST"])
 @jwt_required()
-@limiter.limit("60/hour")
+@app_limiter.limit("60/hour")
 def add_email():
     user_id = get_jwt_identity()
     payload = _get_json()
@@ -182,12 +265,11 @@ def add_email():
     except IntegrityError:
         db.session.rollback()
         return _json_error("This email is already on file.", 409)
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         db.session.rollback()
-        return _json_error(f"DB error: {e}", 500)
+        return _json_error("Database error.", 500)
 
     return jsonify(id=new_email.id), 201
-
 
 @bp.route("/emails/<int:email_id>", methods=["PUT"])
 @jwt_required()
@@ -205,12 +287,11 @@ def set_active_email(email_id: int):
         )
         email.is_active = True
         db.session.commit()
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         db.session.rollback()
-        return _json_error(f"DB error: {e}", 500)
+        return _json_error("Database error.", 500)
 
     return jsonify(message="active email updated"), 200
-
 
 @bp.route("/emails/<int:email_id>", methods=["DELETE"])
 @jwt_required()
@@ -224,124 +305,309 @@ def remove_email(email_id: int):
     try:
         db.session.delete(email)
         db.session.commit()
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         db.session.rollback()
-        return _json_error(f"DB error: {e}", 500)
+        return _json_error("Database error.", 500)
 
     return jsonify(message="deleted"), 200
-
 
 # --------------------------------------------------------------------------- #
 # Exports                                                                     #
 # --------------------------------------------------------------------------- #
-
-# GET JSON DATA in BODY, make CSV and email it with nodemailer / equivalent package for python, most likely using Flask-Mail/Resend
-# @bp.route("/export", methods=["POST"])
-# # @jwt_required()
-# def export_data():
-#     from pprint import pprint
-
-#     try:
-#         # Prefer JSON body first
-#         payload = request.get_json(force=True, silent=True) or {}
-
-#         print("\n--- /export received ---")
-#         pprint(payload)
-#         print("------------------------\n")
-
-#         return jsonify(message="Payload received", data=payload), 200
-
-#     except Exception as e:
-#         return _json_error(f"Error parsing request: {str(e)}", 400)
-
-def encode_attachment(file_path):
-    with open(file_path, "rb") as f:
-        content = f.read()
-        return {
-            "filename": os.path.basename(file_path),
-            "content": base64.b64encode(content).decode("utf-8"),
-        }
-
-
 @bp.route("/export", methods=["POST"])
-# @jwt_required()
+@jwt_required()
+@app_limiter.limit("20/hour")
 def export_data():
-    payload = request.get_json(force=True, silent=True) or {}
+    user_id = get_jwt_identity()
+
+    # Size check
+    raw_len = request.content_length or 0
+    if raw_len > current_app.config["MAX_PAYLOAD_BYTES"]:
+        return _json_error("Payload too large.", 413)
+
+    # Parse JSON
+    try:
+        payload = request.get_json(force=True, silent=False)
+    except Exception:
+        return _json_error("Invalid JSON body.", 400)
+
     export_id = payload.get("exportId") or datetime.utcnow().strftime("%Y%m%d%H%M%S")
+
+    # Save raw payload JSON
+    try:
+        payload_path = _save_payload_json(export_id, payload)
+    except Exception:
+        current_app.logger.exception("Failed to save payload JSON")
+        return _json_error("Failed to persist payload.", 500)
+
+
     headers_str = payload.get("headers", "")
     rows = payload.get("rows", [])
+    form_id = payload.get("formId") or None
 
+    if not isinstance(rows, list):
+        return _json_error("Field 'rows' must be a list.", 400)
+
+    max_rows = current_app.config["MAX_EXPORT_ROWS"]
+    if not rows:
+        return _json_error("No rows to export.", 400)
+    if len(rows) > max_rows:
+        return _json_error(f"Too many rows (>{max_rows}).", 400)
+
+    
+
+    # Build CSV data
+    minimal_headers = [h.strip() for h in headers_str.split(",") if isinstance(h, str) and h.strip()]
+    full_fieldnames = set()
+    parsed_rows = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            data_obj = row.get("data")
+            if isinstance(data_obj, str):
+                data_obj = json.loads(data_obj)
+            elif data_obj is None:
+                data_obj = {}
+            merged = {
+                **(data_obj if isinstance(data_obj, dict) else {}),
+                "id": row.get("id"),
+                "form_id": row.get("form_id"),
+                "scanned_at": row.get("scanned_at"),
+            }
+            parsed_rows.append(merged)
+            full_fieldnames.update(merged.keys())
+        except Exception:
+            continue
+
+    if not parsed_rows:
+        return _json_error("No valid rows after parsing.", 400)
+
+    folder = _export_folder()
+    minimal_csv_name = f"{export_id}_minimal.csv"
+    full_csv_name = f"{export_id}_full.csv"
+
+    minimal_csv_path = os.path.join(folder, minimal_csv_name)
+    full_csv_path = os.path.join(folder, full_csv_name)
+
+    # Minimal CSV
     try:
-        if not rows:
-            return _json_error("No rows to export", 400)
-
-        # Parse headers
-        minimal_headers = [h.strip() for h in headers_str.split(",") if h.strip()]
-        full_fieldnames = set()
-
-        parsed_rows = []
-        for row in rows:
-            try:
-                merged = {
-                    **json.loads(row["data"]),
-                    "id": row.get("id"),
-                    "form_id": row.get("form_id"),
-                    # "key": row.get("key"),
-                    "scanned_at": row.get("scanned_at"),
-                }
-                parsed_rows.append(merged)
-                full_fieldnames.update(merged.keys())
-            except Exception as e:
-                continue  # or log error
-        # ----------------------
-        # 1. Write minimal CSV
-        # ----------------------
-        minimal_csv_path = os.path.join(EXPORT_FOLDER, f"{export_id}_minimal.csv")
         with open(minimal_csv_path, mode="w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=minimal_headers)
+            fieldnames = minimal_headers or sorted(full_fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for row in parsed_rows:
-                writer.writerow({k: row.get(k, "") for k in minimal_headers})
+                writer.writerow({k: _csv_safe(row.get(k, "")) for k in fieldnames})
+    except Exception:
+        current_app.logger.exception("Failed writing minimal CSV")
+        return _json_error("Failed to generate minimal CSV.", 500)
 
-        # ----------------------
-        # 2. Write full CSV
-        # ----------------------
-        full_csv_path = os.path.join(EXPORT_FOLDER, f"{export_id}_full.csv")
+    # Full CSV
+    try:
         with open(full_csv_path, mode="w", newline="", encoding="utf-8") as f:
             fieldnames = sorted(full_fieldnames)
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for row in parsed_rows:
-                writer.writerow(row)
+                writer.writerow({k: _csv_safe(row.get(k, "")) for k in fieldnames})
+    except Exception:
+        current_app.logger.exception("Failed writing full CSV")
+        return _json_error("Failed to generate full CSV.", 500)
+
+    # Email active email
+    active_email = Email.query.filter_by(user_id=user_id, is_active=True).first()
+    if not active_email:
+        return _json_error("No active email on file.", 400)
+
+    try:
+        params: resend.Emails.SendParams = {
+            "from": "Scan App <noreply@scans.omnaris.xyz>",
+            "to": active_email.email,
+            "subject": f"📦 Scan App Export {export_id} @ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
+            "html": f"""
+                <div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+                    <h2 style="color: #007BFF;">📦 Your Scan Export is Ready</h2>
+                    <p>Hello,</p>
+                    <p>Your requested export has been generated successfully. You’ll find the files attached to this email.</p>
+                    <div style="margin-top: 20px;">
+                        <table style="border-collapse: collapse; width: 100%; max-width: 500px;">
+                            <thead>
+                                <tr style="background-color: #f8f9fa; text-align: left;">
+                                    <th style="padding: 8px; border: 1px solid #ddd;">File</th>
+                                    <th style="padding: 8px; border: 1px solid #ddd;">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">{minimal_csv_name}</td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">Minimal CSV export</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">{full_csv_name}</td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">Full CSV export</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">{export_id}.json</td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">Raw JSON data</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p style="margin-top: 20px;">If you did not request this export, please contact your administrator immediately.</p>
+                    <p style="color: #777; font-size: 12px; margin-top: 30px;">
+                        — Scan App Automated Export System
+                    </p>
+                </div>
+            """,
+            "attachments": [
+                encode_attachment(minimal_csv_path),
+                encode_attachment(full_csv_path),
+            ],
+        }
+
+        resend.Emails.send(params)
+        email_sent = True
+    except Exception:
+        current_app.logger.exception("Failed to send export email")
+        email_sent = False
+
+    # Store in DB
+    export_record = Export(
+        export_id=export_id,
+        user_id=user_id,
+        form_id=form_id,
+        minimal_csv=minimal_csv_name,
+        full_csv=full_csv_name,
+        payload_json=f"{export_id}.json",
+        email_sent=email_sent,
+    )
+    db.session.add(export_record)
+    db.session.commit()
+
+    return jsonify(
+        message="Exported successfully" if email_sent else "Exported, but failed to send email.",
+        export_id=export_id,
+        minimal_csv=f"/api/exports/{export_id}/{minimal_csv_name}",
+        full_csv=f"/api/exports/{export_id}/{full_csv_name}",
+        payload_json=f"/api/exports/{export_id}/{export_id}.json",
+        email_sent=email_sent,
+    ), 200
 
 
-        # Encode both CSVs
-        minimal_attachment = encode_attachment(minimal_csv_path)
-        full_attachment    = encode_attachment(full_csv_path)
+@bp.route("/exports/resend/<export_id>", methods=["POST"])
+@jwt_required()
+def resend_export_email(export_id):
+    """
+    Re-send the export email for a given export_id if it belongs to the current user.
+    """
+    user_id = get_jwt_identity()
+    export_record = Export.query.filter_by(export_id=export_id, user_id=user_id).first_or_404()
 
-        try:
-            params: resend.Emails.SendParams = {
-                "from": "Scan App <noreply@scans.omnaris.xyz>",
-                "to": "dannyboy1737@gmail.com",
-                "subject": f"Scan App Export {export_id} @ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
-                "html": f"<p>Your export is ready.</p><ul><li>{minimal_attachment['filename']}</li><li>{full_attachment['filename']}</li></ul>",
-                "attachments": [minimal_attachment, full_attachment],
-            }
+    active_email = Email.query.filter_by(user_id=user_id, is_active=True).first()
+    if not active_email:
+        return _json_error("No active email on file.", 400)
 
-            email = resend.Emails.send(params)
-            print(email)
+    folder = _export_folder()
 
-        except Exception as e:
-            current_app.logger.exception("Failed to send email")
-            return _json_error("Failed to send export email", 500)
+    minimal_csv_path = os.path.join(folder, export_record.minimal_csv)
+    full_csv_path = os.path.join(folder, export_record.full_csv)
 
-        return jsonify(
-            message="Exported successfully",
-            export_id=export_id,
-            minimal_csv=f"/savedExports/{export_id}_minimal.csv",
-            full_csv=f"/savedExports/{export_id}_full.csv"
-        ), 200
+    if not os.path.isfile(minimal_csv_path) or not os.path.isfile(full_csv_path):
+        return _json_error("Export files not found.", 404)
 
-    except Exception as e:
-        current_app.logger.exception("Export failed")
-        return _json_error("Failed to export data", 500)
+    try:
+        params: resend.Emails.SendParams = {
+            "from": "Scan App <noreply@scans.omnaris.xyz>",
+            "to": active_email.email,
+            "subject": f"📦 Scan App Export {export_id} (Re-send) @ {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}",
+            "html": f"""
+                <div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+                    <h2 style="color: #007BFF;">📦 Your Scan Export (Re-sent)</h2>
+                    <p>Hello,</p>
+                    <p>Your export has been re-sent as requested. You’ll find the files attached to this email.</p>
+                    <div style="margin-top: 20px;">
+                        <table style="border-collapse: collapse; width: 100%; max-width: 500px;">
+                            <thead>
+                                <tr style="background-color: #f8f9fa; text-align: left;">
+                                    <th style="padding: 8px; border: 1px solid #ddd;">File</th>
+                                    <th style="padding: 8px; border: 1px solid #ddd;">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">{export_record.minimal_csv}</td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">Minimal CSV export</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">{export_record.full_csv}</td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">Full CSV export</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">{export_record.payload_json}</td>
+                                    <td style="padding: 8px; border: 1px solid #ddd;">Raw JSON data</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p style="margin-top: 20px;">If you did not request this export, please contact your administrator immediately.</p>
+                    <p style="color: #777; font-size: 12px; margin-top: 30px;">
+                        — Scan App Automated Export System
+                    </p>
+                </div>
+            """,
+            "attachments": [
+                encode_attachment(minimal_csv_path),
+                encode_attachment(full_csv_path),
+            ],
+        }
+
+        resend.Emails.send(params)
+        return jsonify({"message": "Export email resent successfully."}), 200
+    except Exception:
+        current_app.logger.exception("Failed to resend export email")
+        return _json_error("Failed to resend email.", 500)
+
+
+
+@bp.route("/exports/file/<export_id>/<path:filename>", methods=["GET"])
+@jwt_required()
+def download_export(export_id, filename):
+    user_id = int(get_jwt_identity())
+
+    # Ensure this export belongs to the logged-in user
+    export_record = Export.query.filter_by(export_id=export_id, user_id=user_id).first_or_404()
+
+    # Prevent path traversal
+    filename = secure_filename(filename)
+    print(filename)
+    folder = _export_folder()
+    path = os.path.join(folder, filename)
+    if not os.path.isfile(path):
+        abort(404)
+
+    return send_from_directory(folder, filename, as_attachment=True)
+
+@bp.route("/exports", methods=["GET"])
+@jwt_required()
+def list_exports():
+    """
+    Return all export IDs belonging to the current user.
+    """
+    user_id = get_jwt_identity()
+    export_ids = (
+        db.session.query(Export.export_id)
+        .filter_by(user_id=user_id)
+        .order_by(Export.created_at.desc())
+        .all()
+    )
+
+    return jsonify([eid for (eid,) in export_ids]), 200
+
+
+
+
+
+
+
+

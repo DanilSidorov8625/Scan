@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 
 export default function AdminIndex() {
   const { isAuth, loading, logout } = useAuth();
-  const { emails, activeEmail, isOnline, setActiveEmail, removeEmail } = useAdmin();
+  const { emails, activeEmail, isOnline, setActiveEmail, removeEmail, requestPasswordReset } = useAdmin();
 
   useEffect(() => {
     if (!loading && !isAuth) {
@@ -41,7 +41,7 @@ export default function AdminIndex() {
   const handleSetActiveEmail = async (email) => {
     const authHeader = 'Bearer admin-token';
     const result = await setActiveEmail(email, authHeader);
-    
+
     if (result.success) {
       Alert.alert('Success', `${email} is now the active email`);
     } else {
@@ -61,7 +61,7 @@ export default function AdminIndex() {
           onPress: async () => {
             const authHeader = 'Bearer admin-token';
             const result = await removeEmail(email, authHeader);
-            
+
             if (result.success) {
               Alert.alert('Success', 'Email removed successfully');
             } else {
@@ -77,6 +77,22 @@ export default function AdminIndex() {
     router.push('/(tabs)/admin/add-email');
   };
 
+  const handleRequestPasswordReset = () => {
+    Alert.prompt(
+      'Request Password Reset',
+      'Enter username',
+      async (input) => {
+        if (!input) return;
+        const result = await requestPasswordReset(input.trim());
+        if (result.success) {
+          Alert.alert('Reset Requested', result.message || 'If the account exists, an email was sent.');
+        } else {
+          Alert.alert('Error', result.error);
+        }
+      }
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView style={styles.container}>
@@ -84,7 +100,7 @@ export default function AdminIndex() {
           <Text style={styles.title}>Admin Panel</Text>
           <Text style={styles.subtitle}>Manage system settings and data</Text>
         </View>
-        
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Status</Text>
           <Text style={styles.statusText}>Online: {isOnline() ? 'Yes' : 'No'}</Text>
@@ -98,32 +114,29 @@ export default function AdminIndex() {
               <Text style={styles.addButtonText}>+ Add Email</Text>
             </TouchableOpacity>
           </View>
-          
+
           {emails.map((emailObj) => (
             <View key={emailObj.id} style={styles.emailItem}>
               <View style={styles.emailInfo}>
                 <Text style={styles.emailAddress}>{emailObj.email}</Text>
-                <Text style={styles.emailStatus}>
-                  Status: {emailObj.status} • Added: {new Date(emailObj.added).toLocaleDateString()}
-                </Text>
                 {emailObj.email === activeEmail && (
                   <Text style={styles.activeLabel}>ACTIVE</Text>
                 )}
               </View>
-              
+
               <View style={styles.emailActions}>
                 {emailObj.email !== activeEmail && (
-                  <TouchableOpacity 
-                    style={styles.actionButton} 
+                  <TouchableOpacity
+                    style={styles.actionButton}
                     onPress={() => handleSetActiveEmail(emailObj.email)}
                   >
                     <Text style={styles.actionButtonText}>Set Active</Text>
                   </TouchableOpacity>
                 )}
-                
+
                 {emailObj.email !== activeEmail && (
-                  <TouchableOpacity 
-                    style={[styles.actionButton, styles.removeButton]} 
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.removeButton]}
                     onPress={() => handleRemoveEmail(emailObj.email)}
                   >
                     <Text style={styles.actionButtonText}>Remove</Text>
@@ -133,6 +146,10 @@ export default function AdminIndex() {
             </View>
           ))}
         </View>
+
+        <TouchableOpacity style={styles.button} onPress={handleRequestPasswordReset}>
+          <Text style={styles.buttonText}>Request Password Reset</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity style={[styles.button, styles.logoutButton]} onPress={handleLogout}>
           <Text style={styles.buttonText}>Logout</Text>
@@ -231,6 +248,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginBottom: 4,
+    
   },
   activeLabel: {
     fontSize: 10,
@@ -241,6 +259,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
     alignSelf: 'flex-start',
+    
   },
   emailActions: {
     flexDirection: 'row',

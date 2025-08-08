@@ -1,71 +1,137 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+// contexts/AuthContext.js
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const AuthContext = createContext();
+
+export const API_BASE = process.env.EXPO_PUBLIC_API_BASE?.trim();
+
+// Storage keys
+const TOKEN_KEY = 'jwt';
+const USERNAME_KEY = 'username';
+
+const AuthContext = createContext(null);
 
 export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
+  return ctx;
 };
 
 export const AuthProvider = ({ children }) => {
-  const [isAuth, setIsAuth] = useState(false);
+  const [token, setToken] = useState(null);
+  const [username, setUsername] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // On mount: hydrate from storage
   useEffect(() => {
-    checkAuthStatus();
+    (async () => {
+      try {
+        const [t, u] = await Promise.all([
+          AsyncStorage.getItem(TOKEN_KEY),
+          AsyncStorage.getItem(USERNAME_KEY),
+        ]);
+        if (t) setToken(t);
+        if (u) setUsername(u);
+      } catch (e) {
+        console.error('Auth hydrate failed:', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const checkAuthStatus = async () => {
+  const isAuth = !!token;
+
+  // ---- Helpers ----
+  const getAuthHeader = useMemo(
+    () => () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    [token]
+  );
+
+  const saveSession = async (newToken, newUsername) => {
+    setToken(newToken);
+    setUsername(newUsername || null);
+    await AsyncStorage.setItem(TOKEN_KEY, newToken);
+    if (newUsername) await AsyncStorage.setItem(USERNAME_KEY, newUsername);
+  };
+
+  const clearSession = async () => {
+    setToken(null);
+    setUsername(null);
+    await AsyncStorage.multiRemove([TOKEN_KEY, USERNAME_KEY]);
+  };
+
+  // ---- API calls ----
+  const register = async (username, password) => {
     try {
-      const token = await AsyncStorage.getItem('adminToken');
-      setIsAuth(!!token);
-    } catch (error) {
-      console.error('Error checking auth status:', error);
-    } finally {
-      setLoading(false);
+      const res = await fetch(`${API_BASE}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+      if (!res.ok) {
+        return { success: false, error: data?.error || text || 'Registration failed' };
+      }
+      // Optional: auto-login after register
+      return await login(username, password);
+    } catch (e) {
+      return { success: false, error: e?.message || 'Network error' };
     }
   };
 
   const login = async (username, password) => {
     try {
-      if (username === 'admin' && password === 'password') {
-        const token = 'admin-token-' + Date.now();
-        await AsyncStorage.setItem('adminToken', token);
-        await AsyncStorage.setItem('adminUsername', username);
-        setIsAuth(true);
-        return { success: true };
+      const res = await fetch(`${API_BASE}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+      if (!res.ok) {
+        return { success: false, error: data?.error || text || 'Invalid credentials' };
       }
-      return { success: false, error: 'Invalid credentials' };
-    } catch (error) {
-      console.error('Login error:', error);
-      return { success: false, error: 'Login failed' };
+
+      const jwt = data?.access_token;
+      if (!jwt) return { success: false, error: 'No token received' };
+
+      await saveSession(jwt, username);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e?.message || 'Network error' };
     }
   };
 
   const logout = async () => {
     try {
-      await AsyncStorage.removeItem('adminToken');
-      await AsyncStorage.removeItem('adminUsername');
-      setIsAuth(false);
-    } catch (error) {
-      console.error('Logout error:', error);
+      await clearSession();
+      return { success: true };
+    } catch (e) {
+      console.error('Logout error:', e);
+      return { success: false, error: 'Failed to logout' };
     }
   };
 
   const value = {
     isAuth,
     loading,
+    username,
+    token,
+    API_BASE,
+    getAuthHeader,   // handy for fetch calls
+    register,
     login,
     logout,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

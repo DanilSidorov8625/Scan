@@ -9,8 +9,8 @@ export const scans = sqliteTable('scans', {
   id: text('id').primaryKey(),
 
   // which user this belongs to
-  userId: text('userId')
-    .notNull(),
+  // userId: text('userId')
+  //   .notNull(),
 
   // which form the scan was for (matches your formsConfig.forms[].id)
   formId: text('formId').notNull(),

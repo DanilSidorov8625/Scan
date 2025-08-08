@@ -13,6 +13,7 @@ import {
 import migrations from '../drizzle/migrations';
 import { AuthProvider } from '../contexts/AuthContext';
 import { AdminProvider } from '../contexts/AdminContext';
+import { ExportProvider } from '../contexts/ExportContext';
 
 export const DATABASE_NAME = 'scans.db';
 const expoDb = openDatabaseSync(DATABASE_NAME);
@@ -48,6 +49,7 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <AdminProvider>
+        <ExportProvider>
         <Suspense
           fallback={
             <View style={styles.fullCenter}>
@@ -64,6 +66,7 @@ export default function RootLayout() {
             <Slot />
           </SQLiteProvider>
         </Suspense>
+        </ExportProvider>
       </AdminProvider>
     </AuthProvider>
   );

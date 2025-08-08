@@ -1,6 +1,6 @@
 // app/forms/dynamic.js
 import { useFocusEffect } from '@react-navigation/native';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -27,6 +27,7 @@ export default function DynamicFormScreen() {
   const { formId } = useLocalSearchParams();
   const form = formsConfig.forms.find(f => f.id === formId);
   const schema = form ? makeZodSchema(form) : null;
+
 
   const db = useSQLiteContext();
   if (!db) {
@@ -100,7 +101,6 @@ export default function DynamicFormScreen() {
 
     const record = {
       id: generateId(),
-      userId: '20348204830293480',
       formId: form.id,
       scannedAt: new Date(),
       data: JSON.stringify(result.data),
@@ -112,7 +112,7 @@ export default function DynamicFormScreen() {
       const existingRecord = drizzleDb
         .select()
         .from(scans)
-        .where(eq(scans.key, firstValue))
+        .where(and(eq(scans.key, firstValue), eq(scans.formId, form.id)))
         .all();
 
       if (existingRecord.length > 0) {
@@ -132,7 +132,11 @@ export default function DynamicFormScreen() {
               scannedAt: record.scannedAt,
               data: record.data,
             })
-            .where(eq(scans.key, firstValue))
+            .where(and(
+                    eq(scans.key, firstValue),
+                    eq(scans.formId, formId),
+                    eq(scans.exported, 0)
+                  ))
             .run();
 
           setMessage({ text: `${firstValue} has been updated!`, type: 'success' });

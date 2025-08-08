@@ -10,7 +10,7 @@ export default function FormsLayout() {
                 }}
             />
             <Stack.Screen
-                name="dynamic"
+                name="[formId]"
                 options={{
                     headerShown: false
                 }}

@@ -20,11 +20,15 @@ import formsConfig from '../../../config/forms.json';
 import { scans } from '../../../db/schema';
 import { useAdmin } from '../../../contexts/AdminContext';
 import { playSound } from '../../../utils/playSound';
+import { useAuth } from '../../../contexts/AuthContext';
+import { useRouter } from 'expo-router';
 
 export default function List() {
   const db = useSQLiteContext();
+  const router = useRouter();
 
   const { isOnline } = useAdmin();
+  const { getAuthHeader } = useAuth();
   const drizzleDb = useMemo(() => drizzle(db), [db]);
 
   const [selectedFormId, setSelectedFormId] = useState(formsConfig.forms[0]?.id || '');
@@ -73,11 +77,11 @@ export default function List() {
 
     const exportId = randomId();
 
-    const response = await fetch('http://127.0.0.1:5000/api/export', {
+    const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE?.trim()}/api/export`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ',
+        ...getAuthHeader(),
       },
       body: JSON.stringify({
         exportId,
@@ -95,10 +99,17 @@ export default function List() {
 
     if (!response.ok) {
       const errorText = await response.text();
+      if (response.status === 401) {
+        Alert.alert('Authentication error', 'Please login again to export data.');
+        router.push('/admin/login');
+        playSound(true);
+        return;
+      }
       Alert.alert('Export failed', errorText || 'An unknown error occurred.');
       playSound(true)
       return;
-    } else {
+    }
+    if (response.status === 200) {
       Alert.alert('Export successful', 'Your data has been sent via email.');
       playSound(false);
       try {
@@ -156,9 +167,10 @@ export default function List() {
         )}
 
         {/* List out each scan */}
-        {form && rows.map(row => (
+        {form && rows.slice(0, 30).map(row => (
           <ScanItem key={row.id} row={row} form={form} />
         ))}
+
 
         {/* Modal for picking form */}
         <Modal
