@@ -56,7 +56,7 @@ backend/*.pyc
 backend/.env
 
 # Virtual env (if inside backend folder)
-backend/venv/
+backend/venv/ 
 backend/env/
 backend/.venv/
 
