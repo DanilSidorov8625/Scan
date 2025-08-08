@@ -64,6 +64,8 @@ backend/.venv/
 backend/instance/
 backend/*.sqlite3
 
+/backend/savedExports/
+
 # Migrations (optional, if using Flask-Migrate)
 backend/migrations/
 
