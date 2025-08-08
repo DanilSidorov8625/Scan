@@ -5,6 +5,7 @@
       "title": "Inbound Form",
       "subtitle": "Enter the inbound barcode",
       "handleDuplicateKey": "error",
+      "csvHeader": "parcelBarcode",
       "fields": [
         {
           "id": "parcelBarcode",
@@ -22,6 +23,7 @@
       "subtitle": "parcel and location barcodes",
       "handleDuplicateKey": "update",
       "handleIdenticalFields": "error",
+      "csvHeader": "parcelBarcode, parcelLocation",
       "fields": [
         {
           "id": "parcelBarcode",

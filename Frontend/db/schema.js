@@ -27,4 +27,6 @@ export const scans = sqliteTable('scans', {
   exported: integer('exported').notNull().default(0),
 
   synced: integer('synced').notNull().default(0),
+
+  exportId: text('exportId').notNull().default(''),
 });

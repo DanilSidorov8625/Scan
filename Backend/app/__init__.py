@@ -4,9 +4,12 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
-db  = SQLAlchemy()
-jwt = JWTManager()
+db      = SQLAlchemy()
+jwt     = JWTManager()
+limiter = Limiter(key_func=get_remote_address)
 
 def create_app():
     app = Flask(__name__, instance_relative_config=True)
@@ -19,26 +22,29 @@ def create_app():
 
     # 2) Load config from environment
     app.config.from_mapping(
-        SECRET_KEY                  = os.getenv("SECRET_KEY", "change-me"),
-        JWT_SECRET_KEY              = os.getenv("JWT_SECRET_KEY", "change-me-too"),
+        SECRET_KEY                     = os.getenv("SECRET_KEY", ""),
+        JWT_SECRET_KEY                 = os.getenv("JWT_SECRET_KEY", ""),
         SQLALCHEMY_TRACK_MODIFICATIONS = False,
-        # 3) Build the SQLite URI from the absolute instance path
-        SQLALCHEMY_DATABASE_URI     = "sqlite:///" + os.path.join(app.instance_path, "app.db"),
+        SQLALCHEMY_DATABASE_URI        = "sqlite:///" + os.path.join(app.instance_path, "app.db"),
+        RESEND_API_KEY                 = os.getenv("RESEND_API_KEY", ""),
     )
 
-    # init extensions
+    # 3) Init extensions on the app
     db.init_app(app)
     jwt.init_app(app)
-    CORS(app, 
-         origins=["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006"],
-         allow_headers=["Content-Type", "Authorization"],
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+    limiter.init_app(app)
+    CORS(
+      app,
+      origins=["http://localhost:8081", "http://127.0.0.1:8081", "http://localhost:19006", "http://127.0.0.1:19006"],
+      allow_headers=["Content-Type", "Authorization"],
+      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
 
-    # register routes
+    # 4) Register your API blueprint
     from .routes import bp as routes_bp
-    app.register_blueprint(routes_bp)
+    app.register_blueprint(routes_bp, url_prefix="/api")
 
-    # create tables if they don't exist
+    # 5) Create tables if they don't exist
     with app.app_context():
         db.create_all()
 

@@ -82,33 +82,7 @@ export default function DynamicFormScreen() {
   };
 
 
-  const postScanToAPI = async record => {
-    try {
-      const response = await fetch('http://127.0.0.1:5000/scan', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(record),
-      });
 
-      if (response.status === 401) {
-        logout();
-        return;
-      }
-
-      if (response.ok) {
-        drizzleDb
-          .update(scans)
-          .set({ synced: 1 })
-          .where(eq(scans.id, record.id))
-          .run();
-      }
-    } catch (err) {
-      console.error('Background scan sync failed:', err);
-    }
-  };
 
   const handleSubmit = async newVals => {
     const result = schema.safeParse(newVals);
@@ -168,7 +142,6 @@ export default function DynamicFormScreen() {
       }
       else {
         drizzleDb.insert(scans).values(record).run();
-        postScanToAPI(record);
       }
       setMessage({ text: `${firstValue} Saved!`, type: 'success' });
       resetForm();

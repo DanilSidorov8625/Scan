@@ -12,72 +12,60 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [token, setToken] = useState(null);
+  const [isAuth, setIsAuth] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadToken();
+    checkAuthStatus();
   }, []);
 
-  const loadToken = async () => {
+  const checkAuthStatus = async () => {
     try {
-      const savedToken = await AsyncStorage.getItem('userToken');
-      if (savedToken) {
-        setToken(savedToken);
-      }
+      const token = await AsyncStorage.getItem('adminToken');
+      setIsAuth(!!token);
     } catch (error) {
-      console.error('Error loading token:', error);
+      console.error('Error checking auth status:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const login = async (userKey) => {
+  const login = async (username, password) => {
     try {
-      const response = await fetch('http://127.0.0.1:5000/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user_key: userKey }),
-      });
-
-      if (response.status === 401) {
-        throw new Error('Invalid user key');
+      if (username === 'admin' && password === 'password') {
+        const token = 'admin-token-' + Date.now();
+        await AsyncStorage.setItem('adminToken', token);
+        await AsyncStorage.setItem('adminUsername', username);
+        setIsAuth(true);
+        return { success: true };
       }
-
-      if (!response.ok) {
-        throw new Error('Login failed');
-      }
-
-      const data = await response.json();
-      const { access_token } = data;
-      
-      await AsyncStorage.setItem('userToken', access_token);
-      setToken(access_token);
-      
-      return access_token;
+      return { success: false, error: 'Invalid credentials' };
     } catch (error) {
-      throw error;
+      console.error('Login error:', error);
+      return { success: false, error: 'Login failed' };
     }
   };
 
   const logout = async () => {
     try {
-      await AsyncStorage.removeItem('userToken');
-      setToken(null);
+      await AsyncStorage.removeItem('adminToken');
+      await AsyncStorage.removeItem('adminUsername');
+      setIsAuth(false);
     } catch (error) {
-      console.error('Error during logout:', error);
+      console.error('Logout error:', error);
     }
   };
 
   const value = {
-    token,
+    isAuth,
     loading,
     login,
     logout,
-    isAuthenticated: !!token,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 };

@@ -1,13 +1,12 @@
 // app/screens/ExportList.js
 import { Picker } from '@react-native-picker/picker';
 import { useFocusEffect } from '@react-navigation/native';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/expo-sqlite';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useState, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   SafeAreaView,
   ScrollView,
@@ -15,34 +14,112 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Alert
 } from 'react-native';
 import formsConfig from '../../../config/forms.json';
 import { scans } from '../../../db/schema';
+import { useAdmin } from '../../../contexts/AdminContext';
+import { playSound } from '../../../utils/playSound';
 
-export default function ExportList() {
+export default function List() {
   const db = useSQLiteContext();
+
+  const { isOnline } = useAdmin();
   const drizzleDb = useMemo(() => drizzle(db), [db]);
 
   const [selectedFormId, setSelectedFormId] = useState(formsConfig.forms[0]?.id || '');
   const [rows, setRows] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
 
+
+  const fetchRows = () => {
+    if (!selectedFormId) return;
+    const results = drizzleDb
+      .select()
+      .from(scans)
+      .where(and(
+        eq(scans.formId, selectedFormId),
+        eq(scans.exported, 0)
+      ))
+      .all();
+    setRows(results);
+  };
+
   useFocusEffect(
     useCallback(() => {
-      if (!selectedFormId) return;
-
-      const results = drizzleDb
-        .select()
-        .from(scans)
-        .where(eq(scans.formId, selectedFormId))
-        .all();
-
-      setRows(results);
+      fetchRows();
     }, [selectedFormId])
   );
 
-
   const form = formsConfig.forms.find(f => f.id === selectedFormId);
+
+
+
+  const exportCSV = async rows => {
+    if (rows.length === 0) {
+      Alert.alert('No records to export');
+      playSound(true)
+      return;
+    };
+
+    if (!isOnline()) {
+      Alert.alert('You are offline', 'Please connect to the internet to email data.');
+      playSound(true)
+      return;
+    }
+
+
+    const randomId = () => Math.random().toString(36).slice(2, 17);
+
+    const exportId = randomId();
+
+    const response = await fetch('http://127.0.0.1:5000/api/export', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ',
+      },
+      body: JSON.stringify({
+        exportId,
+        formId: selectedFormId,
+        headers: form?.csvHeader || '',
+        rows: rows.map(row => ({
+          id: row.id,
+          form_id: row.formId,
+          data: row.data,
+          key: row.key,
+          scanned_at: new Date(row.scannedAt).toISOString(),
+        }))
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      Alert.alert('Export failed', errorText || 'An unknown error occurred.');
+      playSound(true)
+      return;
+    } else {
+      Alert.alert('Export successful', 'Your data has been sent via email.');
+      playSound(false);
+      try {
+        rows.forEach(row => {
+          drizzleDb
+            .update(scans)
+            .set({ exported: 1, exportId })
+            .where(eq(scans.id, row.id))
+            .run();
+        });
+        fetchRows();
+      } catch (e) {
+        console.error('Error parsing export response', e);
+        Alert.alert('Export failed', `An unknown error occurred. ${e}`);
+        playSound(true);
+      }
+
+    }
+
+
+  };
 
   if (!db) {
     return (
@@ -72,7 +149,7 @@ export default function ExportList() {
         {rows.length > 0 && (
           <TouchableOpacity
             style={styles.exportButton}
-            onPress={() => console.log('Exporting rows:', rows)}
+            onPress={async () => await exportCSV(rows)}
           >
             <Text style={styles.exportButtonText}>Export CSV</Text>
           </TouchableOpacity>
@@ -112,21 +189,8 @@ export default function ExportList() {
 // Dynamically renders one scan row:
 function ScanItem({ row, form }) {
   const data = JSON.parse(row.data);
-  
-  const getSyncBorderColor = () => {
-    return row.synced === 0 ? '#ef4444' : '#22c55e'; // red for unsynced, green for synced
-  };
-  
-  const showSyncStatus = () => {
-    const status = row.synced === 0 ? 'Not Synced' : 'Synced';
-    const message = row.synced === 0 
-      ? 'This scan has not been synchronized to the server yet.' 
-      : 'This scan has been successfully synchronized to the server.';
-    Alert.alert(status, message);
-  };
-  
   return (
-    <TouchableOpacity style={[styles.scanItem, { borderColor: getSyncBorderColor(), borderWidth: 2 }]} onPress={showSyncStatus}>
+    <View style={styles.scanItem}>
       {form.fields.map(field => (
         <View key={field.id} style={styles.scanFieldRow}>
           <Text style={[styles.scanFieldLabel, { color: '#3b82f6' }]}>{field.label}:</Text>
@@ -136,7 +200,7 @@ function ScanItem({ row, form }) {
       <Text style={styles.scanTimestamp}>
         at {new Date(row.scannedAt).toLocaleTimeString()}
       </Text>
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -168,9 +232,9 @@ const styles = StyleSheet.create({
   // ScanItem styles
   scanItem: {
     padding: 16,
-    marginBottom: 12,
-    borderRadius: 10,
-    backgroundColor: '#fff',
+    borderBottomColor: '#eee',
+    borderBottomWidth: 1,
+    marginBottom: 8,
   },
   scanFieldRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   scanFieldLabel: { color: '#555', fontWeight: '500' },

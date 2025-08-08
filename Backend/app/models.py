@@ -1,32 +1,33 @@
-# app/models.py
-
 from . import db
-from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 class User(db.Model):
-    __tablename__ = 'users'
+    __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
-    user_key = db.Column(db.Text, unique=True, nullable=False)
-    email = db.Column(db.Text, nullable=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
 
-    scans = db.relationship('Scan', backref='user', cascade='all, delete-orphan')
+    # back‐ref to all Email entries
+    emails = db.relationship("Email", backref="user", lazy="dynamic")
 
-    def __repr__(self):
-        return f"<User id={self.id} key={self.user_key}>"
+    def set_password(self, password: str):
+        """Hashes & stores the password."""
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password: str) -> bool:
+        """Verifies a plaintext password against the stored hash."""
+        return check_password_hash(self.password_hash, password)
 
 
-class Scan(db.Model):
-    __tablename__ = 'scans'
+class Email(db.Model):
+    __tablename__ = "emails"
 
-    id = db.Column(db.Text, primary_key=True)
-    userId = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    formId = db.Column(db.Text, nullable=False)
-    scannedAt = db.Column(db.Text, nullable=False)
-    data = db.Column(db.Text, nullable=False)
-    key = db.Column(db.Text, nullable=False)
-    exported = db.Column(db.Integer, nullable=False, default=0)
-    synced = db.Column(db.Integer, nullable=False, default=0)
-
-    def __repr__(self):
-        return f"<Scan id={self.id} form={self.formId} key={self.key}>"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    email = db.Column(db.String(120), nullable=False)
+    is_active = db.Column(db.Boolean, default=False, nullable=False)
