@@ -116,6 +116,7 @@ export default function AdminIndex() {
             Online: {online === null ? 'Checking…' : online ? 'Yes' : 'No'}
           </Text>
           <Text style={styles.statusText}>Active Email: {activeEmail || '—'}</Text>
+          <Text style={styles.statusText}>For Support Email: danilsidorov8625@gmail.com</Text>
         </View>
 
         {/* NEW: Tokens block */}

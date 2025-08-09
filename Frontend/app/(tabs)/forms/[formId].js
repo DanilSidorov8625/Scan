@@ -20,6 +20,7 @@ import { generateId } from '../../../utils/generateID';
 import { playSound } from '../../../utils/playSound';
 import { makeZodSchema } from '../../../utils/zodSchemaBuilder';
 import { useAuth } from '../../../contexts/AuthContext';
+import { sanitizeObject } from '../../../utils/sanitize';
 
 export default function DynamicFormScreen() {
   const router = useRouter();
@@ -87,7 +88,8 @@ export default function DynamicFormScreen() {
   const fid = form.id;
 
   const handleSubmit = async newVals => {
-    const result = schema.safeParse(newVals);
+    const cleaned = sanitizeObject(newVals);
+    const result = schema.safeParse(cleaned);
     if (!result.success) {
       setMessage({
         text: result.error.issues.map(i => i.message).join('\n'),
