@@ -66,16 +66,16 @@ export default function List() {
       return;
     };
 
-    if (!isOnline()) {
+    if (await !isOnline()) {
       Alert.alert('You are offline', 'Please connect to the internet to email data.');
       playSound(true)
       return;
     }
 
 
-    const randomId = () => Math.random().toString(36).slice(2, 17);
+    // const randomId = () => Math.random().toString(36).slice(2, 17);
 
-    const exportId = randomId();
+    const exportId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`;;
 
     const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE?.trim()}/api/export`, {
       method: 'POST',

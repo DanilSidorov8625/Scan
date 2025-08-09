@@ -19,6 +19,7 @@ import { scans } from '../../../db/schema';
 import { useExports } from '../../../contexts/ExportContext'; // from earlier
 import { playSound } from '../../../utils/playSound';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 
 export default function Index() {
@@ -84,10 +85,16 @@ export default function Index() {
       // Write file
       await FileSystem.writeAsStringAsync(fileUri, base64, { encoding: FileSystem.EncodingType.Base64 });
 
-      Alert.alert('Downloaded', `File saved to: ${fileUri}`);
+      // Share the file using expo-sharing
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri);
+      } else {
+        Alert.alert('Downloaded', `File saved to: ${fileUri}\n(Sharing not available on this device)`);
+      }
       console.log('File saved at:', fileUri);
     } catch (err) {
       Alert.alert('Error', err.message);
+      playSound(true);
     }
   };
 

@@ -11,8 +11,8 @@
           "id": "parcelBarcode",
           "label": "Inbound Barcode",
           "placeholder": "Enter inbound barcode",
-          "minLength": 5,
-          "maxLength": 20,
+          "minLength": 1,
+          "maxLength": 100,
           "required": true
         }
       ]
@@ -29,16 +29,16 @@
           "id": "parcelBarcode",
           "label": "Parcel Barcode",
           "placeholder": "Enter parcel barcode",
-          "minLength": 5,
-          "maxLength": 20,
+          "minLength": 1,
+          "maxLength": 100,
           "required": true
         },
         {
           "id": "parcelLocation",
           "label": "Location Barcode",
           "placeholder": "Enter location barcode",
-          "minLength": 5,
-          "maxLength": 20,
+          "minLength": 1,
+          "maxLength": 100,
           "required": true
         }
       ]

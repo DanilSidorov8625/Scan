@@ -84,6 +84,7 @@ export default function DynamicFormScreen() {
 
 
 
+  const fid = form.id;
 
   const handleSubmit = async newVals => {
     const result = schema.safeParse(newVals);
@@ -101,7 +102,7 @@ export default function DynamicFormScreen() {
 
     const record = {
       id: generateId(),
-      formId: form.id,
+      formId: fid,
       scannedAt: new Date(),
       data: JSON.stringify(result.data),
       key: firstValue,
@@ -112,7 +113,7 @@ export default function DynamicFormScreen() {
       const existingRecord = drizzleDb
         .select()
         .from(scans)
-        .where(and(eq(scans.key, firstValue), eq(scans.formId, form.id)))
+        .where(and(eq(scans.key, firstValue), eq(scans.formId, fid)))
         .all();
 
       if (existingRecord.length > 0) {
@@ -134,7 +135,7 @@ export default function DynamicFormScreen() {
             })
             .where(and(
                     eq(scans.key, firstValue),
-                    eq(scans.formId, formId),
+                    eq(scans.formId, fid),
                     eq(scans.exported, 0)
                   ))
             .run();

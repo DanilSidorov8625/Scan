@@ -93,6 +93,11 @@ export default function AdminIndex() {
     );
   };
 
+  const checkOnlineStatus = async () => {
+    const online = await isOnline();
+    return online;
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView style={styles.container}>
@@ -103,7 +108,7 @@ export default function AdminIndex() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Status</Text>
-          <Text style={styles.statusText}>Online: {isOnline() ? 'Yes' : 'No'}</Text>
+          <Text style={styles.statusText}>Online: {checkOnlineStatus() ? 'Yes' : 'No'}</Text>
           <Text style={styles.statusText}>Active Email: {activeEmail}</Text>
         </View>
 
