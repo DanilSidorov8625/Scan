@@ -1,18 +1,56 @@
-import React, { useEffect } from 'react';
-import { Text, View, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, SafeAreaView, ScrollView } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Text, View, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, SafeAreaView, ScrollView, RefreshControl } from 'react-native';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useAdmin } from '../../../contexts/AdminContext';
+import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 
 export default function AdminIndex() {
   const { isAuth, loading, logout } = useAuth();
-  const { emails, activeEmail, isOnline, setActiveEmail, removeEmail, requestPasswordReset } = useAdmin();
+
+  // pull in fetchEmails + loadingEmails so we can refetch on focus
+  const {
+    emails,
+    activeEmail,
+    isOnline,
+    setActiveEmail,
+    removeEmail,
+    requestPasswordReset,
+    fetchEmails,
+    loadingEmails,
+
+    // NEW: tokens
+    tokensUsed,
+    tokensLeft,
+    loadingTokens,
+    fetchTokenStats,
+    requestMoreTokens,
+  } = useAdmin();
+
+  const [online, setOnline] = useState(null);
 
   useEffect(() => {
-    if (!loading && !isAuth) {
-      router.replace('/(tabs)/admin/login');
-    }
+    if (!loading && !isAuth) router.replace('/(tabs)/admin/login');
   }, [isAuth, loading]);
+
+  useEffect(() => {
+    fetchEmails();
+    refreshOnline();
+    fetchTokenStats(); // NEW: load tokens here too
+  }, [fetchEmails, fetchTokenStats]);
+
+  const onRefresh = useCallback(async () => {
+    await Promise.all([fetchEmails(), refreshOnline(), fetchTokenStats()]);
+  }, [fetchEmails, fetchTokenStats]);
+
+  const refreshOnline = useCallback(async () => {
+    try {
+      const ok = await isOnline();
+      setOnline(!!ok);
+    } catch {
+      setOnline(false);
+    }
+  }, [isOnline]);
 
   if (loading) {
     return (
@@ -22,85 +60,51 @@ export default function AdminIndex() {
       </View>
     );
   }
-
-  if (!isAuth) {
-    return null;
-  }
+  if (!isAuth) return null;
 
   const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', style: 'destructive', onPress: logout },
-      ]
+    Alert.alert('Logout','Are you sure you want to logout?',
+      [{ text:'Cancel', style:'cancel' }, { text:'Logout', style:'destructive', onPress: logout }]
     );
   };
 
   const handleSetActiveEmail = async (email) => {
-    const authHeader = 'Bearer admin-token';
-    const result = await setActiveEmail(email, authHeader);
-
-    if (result.success) {
-      Alert.alert('Success', `${email} is now the active email`);
-    } else {
-      Alert.alert('Error', result.error);
-    }
+    const result = await setActiveEmail(email);
+    Alert.alert(result.success ? 'Success' : 'Error', result.success ? `${email} is now active` : result.error);
   };
 
-  const handleRemoveEmail = async (email) => {
-    Alert.alert(
-      'Remove Email',
-      `Are you sure you want to remove ${email}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            const authHeader = 'Bearer admin-token';
-            const result = await removeEmail(email, authHeader);
-
-            if (result.success) {
-              Alert.alert('Success', 'Email removed successfully');
-            } else {
-              Alert.alert('Error', result.error);
-            }
-          },
+  const handleRemoveEmail = (email) => {
+    Alert.alert('Remove Email', `Remove ${email}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          const result = await removeEmail(email);
+          Alert.alert(result.success ? 'Success' : 'Error', result.success ? 'Email removed' : result.error);
         },
-      ]
-    );
-  };
-
-  const handleAddEmail = () => {
-    router.push('/(tabs)/admin/add-email');
+      },
+    ]);
   };
 
   const handleRequestPasswordReset = () => {
-    Alert.prompt(
-      'Request Password Reset',
-      'Enter username',
-      async (input) => {
-        if (!input) return;
-        const result = await requestPasswordReset(input.trim());
-        if (result.success) {
-          Alert.alert('Reset Requested', result.message || 'If the account exists, an email was sent.');
-        } else {
-          Alert.alert('Error', result.error);
-        }
-      }
-    );
+    Alert.prompt('Request Password Reset','Enter username', async (input) => {
+      if (!input) return;
+      const result = await requestPasswordReset(input.trim());
+      Alert.alert(result.success ? 'Reset Requested' : 'Error', result.success ? (result.message || 'If the account exists, an email was sent.') : result.error);
+    });
   };
 
-  const checkOnlineStatus = async () => {
-    const online = await isOnline();
-    return online;
-  };
+  // --- NEW: progress bar component (inline) ---
+  const totalTokens = Math.max(0, Number(tokensUsed) + Number(tokensLeft));
+  const pct = totalTokens ? Math.min(1, Math.max(0, Number(tokensUsed) / totalTokens)) : 0;
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView style={styles.container}>
+      <ScrollView
+        style={styles.container}
+        refreshControl={<RefreshControl refreshing={!!loadingEmails || !!loadingTokens} onRefresh={onRefresh} />}
+      >
         <View style={styles.header}>
           <Text style={styles.title}>Admin Panel</Text>
           <Text style={styles.subtitle}>Manage system settings and data</Text>
@@ -108,14 +112,48 @@ export default function AdminIndex() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Status</Text>
-          <Text style={styles.statusText}>Online: {checkOnlineStatus() ? 'Yes' : 'No'}</Text>
-          <Text style={styles.statusText}>Active Email: {activeEmail}</Text>
+          <Text style={styles.statusText}>
+            Online: {online === null ? 'Checking…' : online ? 'Yes' : 'No'}
+          </Text>
+          <Text style={styles.statusText}>Active Email: {activeEmail || '—'}</Text>
+        </View>
+
+        {/* NEW: Tokens block */}
+        <View style={styles.tokenCard}>
+          <View style={styles.tokenHeader}>
+            <Text style={styles.sectionTitle}>Tokens</Text>
+            {loadingTokens ? <ActivityIndicator size="small" /> : null}
+          </View>
+
+          <View style={styles.progressOuter}>
+            <View style={[styles.progressInner, { width: `${pct * 100}%` }]} />
+          </View>
+
+          <View style={styles.tokenRow}>
+            <Text style={styles.tokenLabel}>Used: <Text style={styles.tokenVal}>{tokensUsed}</Text></Text>
+            <Text style={styles.tokenLabel}>Left: <Text style={styles.tokenVal}>{tokensLeft}</Text></Text>
+            <Text style={styles.tokenLabel}>Total: <Text style={styles.tokenVal}>{totalTokens}</Text></Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.moreBtn}
+            onPress={async () => {
+              const res = await requestMoreTokens();
+              if (res.success) {
+                Alert.alert('Request Sent', res.message);
+              } else {
+                Alert.alert('Error', res.error);
+              }
+            }}
+          >
+            <Text style={styles.moreBtnText}>Get more tokens</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Email Management</Text>
-            <TouchableOpacity style={styles.addButton} onPress={handleAddEmail}>
+            <TouchableOpacity style={styles.addButton} onPress={() => router.push('/(tabs)/admin/add-email')}>
               <Text style={styles.addButtonText}>+ Add Email</Text>
             </TouchableOpacity>
           </View>
@@ -124,28 +162,19 @@ export default function AdminIndex() {
             <View key={emailObj.id} style={styles.emailItem}>
               <View style={styles.emailInfo}>
                 <Text style={styles.emailAddress}>{emailObj.email}</Text>
-                {emailObj.email === activeEmail && (
-                  <Text style={styles.activeLabel}>ACTIVE</Text>
-                )}
+                {emailObj.email === activeEmail && <Text style={styles.activeLabel}>ACTIVE</Text>}
               </View>
 
               <View style={styles.emailActions}>
                 {emailObj.email !== activeEmail && (
-                  <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => handleSetActiveEmail(emailObj.email)}
-                  >
-                    <Text style={styles.actionButtonText}>Set Active</Text>
-                  </TouchableOpacity>
-                )}
-
-                {emailObj.email !== activeEmail && (
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.removeButton]}
-                    onPress={() => handleRemoveEmail(emailObj.email)}
-                  >
-                    <Text style={styles.actionButtonText}>Remove</Text>
-                  </TouchableOpacity>
+                  <>
+                    <TouchableOpacity style={styles.actionButton} onPress={() => handleSetActiveEmail(emailObj.email)}>
+                      <Text style={styles.actionButtonText}>Set Active</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.actionButton, styles.removeButton]} onPress={() => handleRemoveEmail(emailObj.email)}>
+                      <Text style={styles.actionButtonText}>Remove</Text>
+                    </TouchableOpacity>
+                  </>
                 )}
               </View>
             </View>
@@ -253,7 +282,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginBottom: 4,
-    
   },
   activeLabel: {
     fontSize: 10,
@@ -264,7 +292,6 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
     alignSelf: 'flex-start',
-    
   },
   emailActions: {
     flexDirection: 'row',
@@ -299,5 +326,60 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+
+  // ---- NEW styles for tokens / progress bar ----
+  tokenCard: {
+    marginBottom: 20,
+    padding: 15,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  tokenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  progressOuter: {
+    height: 14,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  progressInner: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: '#007AFF',
+  },
+  tokenRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  tokenLabel: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  tokenVal: {
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  moreBtn: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#0ea5e9',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  moreBtnText: {
+    color: '#fff',
+    fontWeight: '600',
   },
 });

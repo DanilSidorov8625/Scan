@@ -1,12 +1,11 @@
 // contexts/AuthContext.js
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { alertOnce } from '../utils/alertOnce'; // ⬅ import it
+import { useRouter } from 'expo-router';
 
+export const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
 
-export const API_BASE = process.env.EXPO_PUBLIC_API_BASE?.trim();
-
-// Storage keys
 const TOKEN_KEY = 'jwt';
 const USERNAME_KEY = 'username';
 
@@ -22,8 +21,8 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(null);
   const [username, setUsername] = useState(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
-  // On mount: hydrate from storage
   useEffect(() => {
     (async () => {
       try {
@@ -33,8 +32,6 @@ export const AuthProvider = ({ children }) => {
         ]);
         if (t) setToken(t);
         if (u) setUsername(u);
-      } catch (e) {
-        console.error('Auth hydrate failed:', e);
       } finally {
         setLoading(false);
       }
@@ -43,7 +40,6 @@ export const AuthProvider = ({ children }) => {
 
   const isAuth = !!token;
 
-  // ---- Helpers ----
   const getAuthHeader = useMemo(
     () => () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
@@ -62,7 +58,6 @@ export const AuthProvider = ({ children }) => {
     await AsyncStorage.multiRemove([TOKEN_KEY, USERNAME_KEY]);
   };
 
-  // ---- API calls ----
   const register = async (username, password) => {
     try {
       const res = await fetch(`${API_BASE}/api/register`, {
@@ -76,11 +71,12 @@ export const AuthProvider = ({ children }) => {
       try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
       if (!res.ok) {
+        alertOnce('register-fail', 'Registration Failed', data?.error || text || 'Registration failed');
         return { success: false, error: data?.error || text || 'Registration failed' };
       }
-      // Optional: auto-login after register
       return await login(username, password);
     } catch (e) {
+      alertOnce('register-network', 'Network Error', e?.message || 'Could not reach server');
       return { success: false, error: e?.message || 'Network error' };
     }
   };
@@ -98,15 +94,20 @@ export const AuthProvider = ({ children }) => {
       try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
       if (!res.ok) {
+        alertOnce('login-fail', 'Login Failed', data?.error || text || 'Invalid credentials');
         return { success: false, error: data?.error || text || 'Invalid credentials' };
       }
 
       const jwt = data?.access_token;
-      if (!jwt) return { success: false, error: 'No token received' };
+      if (!jwt) {
+        alertOnce('login-no-token', 'Login Failed', 'No token received');
+        return { success: false, error: 'No token received' };
+      }
 
       await saveSession(jwt, username);
       return { success: true };
     } catch (e) {
+      alertOnce('login-network', 'Network Error', e?.message || 'Could not reach server');
       return { success: false, error: e?.message || 'Network error' };
     }
   };
@@ -114,9 +115,9 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       await clearSession();
+      
       return { success: true };
-    } catch (e) {
-      console.error('Logout error:', e);
+    } catch {
       return { success: false, error: 'Failed to logout' };
     }
   };
@@ -127,7 +128,7 @@ export const AuthProvider = ({ children }) => {
     username,
     token,
     API_BASE,
-    getAuthHeader,   // handy for fetch calls
+    getAuthHeader,
     register,
     login,
     logout,

@@ -1,9 +1,13 @@
-// contexts/AdminContext.js (JS, not TS)
+// contexts/AdminContext.js
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from './AuthContext'; // must be mounted ABOVE AdminProvider
+import { Alert } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import { useAuth } from './AuthContext';
+import { alertOnce } from '../utils/alertOnce';
+import * as Linking from 'expo-linking';
+import * as Clipboard from 'expo-clipboard';
 
 const AdminContext = createContext(null);
-
 export const useAdmin = () => {
   const ctx = useContext(AdminContext);
   if (!ctx) throw new Error('useAdmin must be used within an AdminProvider');
@@ -11,35 +15,79 @@ export const useAdmin = () => {
 };
 
 export const AdminProvider = ({ children }) => {
-  const { API_BASE, token } = useAuth(); // ← use the raw token
-  const [emails, setEmails] = useState([]);       // [{id,email,is_active}]
+  const { API_BASE, token, logout } = useAuth();
+  const [emails, setEmails] = useState([]);
   const [activeEmail, setActiveEmail] = useState(null);
   const [loadingEmails, setLoadingEmails] = useState(false);
 
-  const authHeaders = useCallback(() => {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }, [token]);
+  // --- NEW: token stats state ---
+  const [tokensUsed, setTokensUsed] = useState(0);
+  const [tokensLeft, setTokensLeft] = useState(0);
+  const [loadingTokens, setLoadingTokens] = useState(false);
+
+  const authHeaders = useCallback(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
   const isOnline = async () => {
-    const state = await NetInfo.fetch();
-    return state.isConnected && state.isInternetReachable;
+    try {
+      const state = await NetInfo.fetch();
+      return !!(state.isConnected && (state.isInternetReachable !== false));
+    } catch {
+      return true;
+    }
   };
 
+  // ---- THE WRAPPER ----
+  const apiFetch = useCallback(
+    async (path, opts = {}) => {
+      const online = await isOnline();
+      if (!online) {
+        alertOnce('offline', 'Offline', 'No internet connection.');
+        throw new Error('offline');
+      }
+
+      const res = await fetch(`${API_BASE}${path}`, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(opts.headers || {}),
+          ...authHeaders(),
+        },
+      });
+
+      if (res.status === 401) {
+        alertOnce('401', 'Session expired', 'Please log in again.', () => logout());
+        throw new Error('unauthorized');
+      }
+      if (res.status === 403) {
+        alertOnce('403', 'Cannot reach server', 'The server rejected the request (403). Check API URL / network / VPN.', () => logout());
+        throw new Error('forbidden');
+      }
+
+      const ct = res.headers.get('content-type') || '';
+      let data = null;
+      if (res.status !== 204) {
+        data = ct.includes('application/json')
+          ? await res.json().catch(() => ({}))
+          : await res.text();
+      }
+
+      if (!res.ok) {
+        const msg = (data && data.error) || `HTTP ${res.status}`;
+        alertOnce(`http_${res.status}`, 'Error', msg);
+        throw new Error(msg);
+      }
+
+      return data;
+    },
+    [API_BASE, authHeaders, logout]
+  );
+
+  // ------- USE IT -------
   const fetchEmails = useCallback(async () => {
     if (!token) return { success: false, error: 'Not authenticated' };
     setLoadingEmails(true);
     try {
-      const res = await fetch(`${API_BASE}/api/emails`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data?.error || 'Failed to fetch emails' };
-      }
+      const data = await apiFetch('/api/emails', { method: 'GET' });
       const list = Array.isArray(data) ? data : [];
       setEmails(list);
       const active = list.find(e => e.is_active);
@@ -50,29 +98,21 @@ export const AdminProvider = ({ children }) => {
     } finally {
       setLoadingEmails(false);
     }
-  }, [API_BASE, token, authHeaders]); // ← depends on token, not getAuthHeader-from-context
+  }, [token, apiFetch]);
 
   const addEmail = useCallback(async (email) => {
     if (!token) return { success: false, error: 'Not authenticated' };
     try {
-      const res = await fetch(`${API_BASE}/api/emails`, {
+      const data = await apiFetch('/api/emails', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data?.error || 'Failed to add email' };
-      }
       await fetchEmails();
       return { success: true, id: data.id };
     } catch (e) {
       return { success: false, error: e?.message || 'Network error' };
     }
-  }, [API_BASE, token, authHeaders, fetchEmails]);
+  }, [token, apiFetch, fetchEmails]);
 
   const setActiveEmailApi = useCallback(async (emailOrId) => {
     if (!token) return { success: false, error: 'Not authenticated' };
@@ -83,23 +123,13 @@ export const AdminProvider = ({ children }) => {
       id = match.id;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/emails/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data?.error || 'Failed to set active email' };
-      }
+      await apiFetch(`/api/emails/${id}`, { method: 'PUT' });
       await fetchEmails();
       return { success: true };
     } catch (e) {
       return { success: false, error: e?.message || 'Network error' };
     }
-  }, [API_BASE, token, authHeaders, emails, fetchEmails]);
+  }, [token, emails, apiFetch, fetchEmails]);
 
   const removeEmail = useCallback(async (emailOrId) => {
     if (!token) return { success: false, error: 'Not authenticated' };
@@ -114,56 +144,93 @@ export const AdminProvider = ({ children }) => {
       if (match?.is_active) return { success: false, error: 'Cannot remove active email' };
     }
     try {
-      const res = await fetch(`${API_BASE}/api/emails/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        return { success: false, error: data?.error || 'Failed to remove email' };
-      }
+      await apiFetch(`/api/emails/${id}`, { method: 'DELETE' });
       await fetchEmails();
       return { success: true };
     } catch (e) {
       return { success: false, error: e?.message || 'Network error' };
     }
-  }, [API_BASE, token, authHeaders, emails, fetchEmails]);
+  }, [token, emails, apiFetch, fetchEmails]);
 
   const requestPasswordReset = useCallback(async (identifier) => {
-    // identifier can be username OR email
     try {
-      const body = {};
-      if (identifier.includes('@')) body.email = identifier;
-      else body.username = identifier;
-
-      const res = await fetch(`${API_BASE}/api/reset-password/request`, {
+      const body = identifier.includes('@') ? { email: identifier } : { username: identifier };
+      const data = await apiFetch('/api/reset-password/request', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json().catch(() => ({}));
-      // API deliberately returns 200 even if user/email doesn't exist
-      if (!res.ok) {
-        return { success: false, error: data?.error || 'Failed to request reset' };
-      }
       return { success: true, message: data?.message || 'If the account exists, an email was sent.' };
     } catch (e) {
       return { success: false, error: e?.message || 'Network error' };
     }
-  }, [API_BASE]);
+  }, [apiFetch]);
 
-  // Load emails when you log in / token changes
+  // --- NEW: token endpoints ---
+  const fetchTokenStats = useCallback(async () => {
+    if (!token) return { success: false, error: 'Not authenticated' };
+    setLoadingTokens(true);
+    try {
+      const data = await apiFetch('/api/getUserTokens', { method: 'GET' });
+      // expecting { tokensLeft, tokensUsed }
+      setTokensLeft(Number(data?.tokensLeft ?? 0));
+      setTokensUsed(Number(data?.tokensUsed ?? 0));
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e?.message || 'Network error' };
+    } finally {
+      setLoadingTokens(false);
+    }
+  }, [token, apiFetch]);
+
+  const requestMoreTokens = useCallback(
+    async (opts = {}) => {
+      // opts can include { tokens, email, min, max }
+      if (!token) return { success: false, error: 'Not authenticated' };
+      try {
+        const data = await apiFetch('/api/getMoreTokens', {
+          method: 'POST',
+          body: JSON.stringify(opts),
+        });
+
+        // // Expecting { url, emailed, adjustable, unitAmountCents }
+        // const url = data?.url;
+        // if (!url) {
+        //   return { success: false, error: 'No checkout URL returned' };
+        // }
+
+        // // Try to open the Stripe Checkout URL
+        // const canOpen = await Linking.canOpenURL(url);
+        // if (canOpen) {
+        //   await Linking.openURL(url);
+        //   return { success: true, url };
+        // }
+
+        // // Fallback: copy to clipboard so user can paste into a browser
+        // await Clipboard.setStringAsync(url);
+        // return {
+        //   success: true,
+        //   url,
+        //   message: 'Could not open browser. Link copied to clipboard.',
+        // };
+        return { success: true, message: "The Stripe Checkout link has been emailed to your active email. Please check your inbox & Refresh the app upon successful payment." }
+      } catch (e) {
+        return { success: false, error: e?.message || 'Network error' };
+      }
+    },
+    [token, apiFetch]
+  );
+
   useEffect(() => {
-    if (token) fetchEmails();
-    else {
-      // clear state on logout
+    if (token) {
+      fetchEmails();
+      fetchTokenStats(); // load token stats on login
+    } else {
       setEmails([]);
       setActiveEmail(null);
+      setTokensLeft(0);
+      setTokensUsed(0);
     }
-  }, [token, fetchEmails]);
+  }, [token, fetchEmails, fetchTokenStats]);
 
   const value = useMemo(() => ({
     emails,
@@ -174,12 +241,18 @@ export const AdminProvider = ({ children }) => {
     setActiveEmail: setActiveEmailApi,
     removeEmail,
     requestPasswordReset,
-    isOnline, // stub; wire NetInfo if you want
-  }), [emails, activeEmail, loadingEmails, fetchEmails, addEmail, setActiveEmailApi, removeEmail, requestPasswordReset]);
+    isOnline,
 
-  return (
-    <AdminContext.Provider value={value}>
-      {children}
-    </AdminContext.Provider>
-  );
+    // NEW: tokens
+    tokensUsed,
+    tokensLeft,
+    loadingTokens,
+    fetchTokenStats,
+    requestMoreTokens,
+  }), [
+    emails, activeEmail, loadingEmails, fetchEmails, addEmail, setActiveEmailApi, removeEmail, requestPasswordReset,
+    tokensUsed, tokensLeft, loadingTokens, fetchTokenStats, requestMoreTokens
+  ]);
+
+  return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;
 };

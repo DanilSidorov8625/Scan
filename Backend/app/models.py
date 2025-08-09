@@ -11,6 +11,10 @@ class User(db.Model):
 
     emails = db.relationship("Email", backref="user", lazy="dynamic")
 
+    tokensTotal = db.Column(db.Integer, nullable=False, server_default="0")
+    tokensUsed  = db.Column(db.Integer, nullable=False, server_default="0")
+    stripeID       = db.Column(db.String(255), nullable=True)
+
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
 
@@ -66,3 +70,4 @@ class Export(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     user = db.relationship("User", backref="exports")
+

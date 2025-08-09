@@ -20,12 +20,14 @@ import { useExports } from '../../../contexts/ExportContext'; // from earlier
 import { playSound } from '../../../utils/playSound';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { useRouter } from 'expo-router'; // for navigation
 
 
 export default function Index() {
   const db = useSQLiteContext();
   const drizzleDb = useMemo(() => drizzle(db), [db]);
   const { resendExportEmail, downloadExport } = useExports();
+  const router = useRouter();
 
   const [exportList, setExportList] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -67,7 +69,10 @@ export default function Index() {
       Alert.alert('Resent', `Export ${exportId} email re-sent successfully`);
       playSound(false);
     } catch (err) {
-      Alert.alert('Error', err.message);
+      console.error('Resend error:', err);
+      // if (err.message.includes('Unauthorized')) router.replace('/(tabs)/admin/login');
+      // else if (err.message.includes('404')) Alert.alert('Error', 'Export not found on server in connection to your login.');
+      // else if (err.message.includes('not found')) Alert.alert('Error', err.message);
       playSound(true);
     }
   };
@@ -93,7 +98,9 @@ export default function Index() {
       }
       console.log('File saved at:', fileUri);
     } catch (err) {
-      Alert.alert('Error', err.message);
+      // if (err.message.includes('Unauthorized')) router.replace('/(tabs)/admin/login');
+      // else if (err.message.includes('404')) Alert.alert('Error', 'Export not found on server in connection to your login.');
+      // else Alert.alert('Error', err.message);
       playSound(true);
     }
   };
@@ -168,6 +175,12 @@ export default function Index() {
         <SafeAreaView style={styles.full}>
           <ScrollView contentContainerStyle={styles.modalContainer}>
             <Text style={styles.modalTitle}>Export {modalExportId}</Text>
+             <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setModalVisible(false)}
+            >
+              <Text style={styles.closeText}>Close</Text>
+            </TouchableOpacity>
             {modalRows.map((row) => {
               let data;
               try {
@@ -183,12 +196,7 @@ export default function Index() {
                 </View>
               );
             })}
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setModalVisible(false)}
-            >
-              <Text style={styles.closeText}>Close</Text>
-            </TouchableOpacity>
+           
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -247,7 +255,7 @@ const styles = StyleSheet.create({
   },
   modalField: { fontSize: 14, marginBottom: 4, color: '#334155' },
   closeButton: {
-    marginTop: 20,
+    marginBottom: 20,
     backgroundColor: '#3b82f6',
     paddingVertical: 10,
     borderRadius: 6,

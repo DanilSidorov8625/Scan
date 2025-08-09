@@ -43,10 +43,10 @@ export default function AdminLogin() {
       if (result?.success) {
         router.replace('/admin');
       } else {
-        Alert.alert('Error', result?.error || 'Login failed');
+        // Alert.alert('Error', result?.error || 'Login failed');
       }
     } catch (err) {
-      Alert.alert('Error', err?.message || 'Login failed');
+      // Alert.alert('Error', err?.message || 'Login failed');
     } finally {
       setLoading(false);
     }
