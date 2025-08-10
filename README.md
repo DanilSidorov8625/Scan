@@ -6,7 +6,7 @@
 - **REST API** built with Flask  
 - **JWT Authentication** with rate-limiting  
 - **Stripe Payments** for subscription & billing  
-- **Form Scanning & Parsing**  
+- **Form Scanning & Parsing & Sanitization**  
 - **SQLite Storage** with Alembic migrations  
 - **CSV/Email Export**  
 - **Webhook support** (Stripe event processing)  
