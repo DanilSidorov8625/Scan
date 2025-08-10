@@ -15,3 +15,8 @@ def tokens_success():
 @pages_bp.route("/tokens/cancel")
 def tokens_cancel():
     return render_template("tokens_cancel.html")
+
+
+@pages_bp.route("/")
+def home():
+    return render_template("index.html")
