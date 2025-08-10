@@ -71,3 +71,9 @@ class Export(db.Model):
 
     user = db.relationship("User", backref="exports")
 
+
+class ProcessedEvent(db.Model):
+    __tablename__ = "processed_events"
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.String(255), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

@@ -23,9 +23,10 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from werkzeug.utils import secure_filename
 import resend
 import stripe
+from sqlalchemy import text
 
 
-from .models import db, User, Email, PasswordResetToken, Export
+from .models import db, User, Email, PasswordResetToken, Export, ProcessedEvent
 from . import limiter as app_limiter  # use the Limiter initialized in __init__
 
 bp = Blueprint("api", __name__)
@@ -52,12 +53,25 @@ def _tokens_left(user: User) -> int:
     return max(total - used, 0)
 
 def _charge_tokens(user: User, cost: int = 1) -> bool:
-    """Increment tokensUsed if there is enough balance. Commit immediately."""
-    if _tokens_left(user) < cost:
+    """
+    Atomically increment tokensUsed only if (tokensTotal - tokensUsed) >= cost.
+    Works on SQLite by doing a single conditional UPDATE.
+    """
+    try:
+        with db.engine.begin() as conn:  # transactional
+            result = conn.execute(
+                text("""
+                    UPDATE users
+                    SET tokensUsed = tokensUsed + :cost
+                    WHERE id = :uid AND (tokensTotal - tokensUsed) >= :cost
+                """),
+                {"cost": cost, "uid": user.id},
+            )
+            # rows affected == 1 => success
+            return result.rowcount == 1
+    except Exception:
+        current_app.logger.exception("Atomic charge failed")
         return False
-    user.tokensUsed = int(user.tokensUsed or 0) + cost
-    db.session.commit()
-    return True
 
 def _refund_tokens(user: User, cost: int = 1):
     """Best-effort: subtract previously charged tokens if something failed later."""
@@ -426,7 +440,7 @@ def get_more_tokens():
 
 @bp.route("/stripe/webhook", methods=["POST"])
 def stripe_webhook():
-    payload = request.data
+    payload = request.get_data()        # do not read body elsewhere before this
     sig_header = request.headers.get("Stripe-Signature")
     secret = current_app.config.get("STRIPE_WEBHOOK_SECRET")
     stripe.api_key = current_app.config.get("STRIPE_API_KEY")
@@ -436,26 +450,41 @@ def stripe_webhook():
         return "Stripe keys not configured", 500
 
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, secret
-        )
+        event = stripe.Webhook.construct_event(payload, sig_header, secret)
     except ValueError:
         return "Invalid payload", 400
     except stripe.error.SignatureVerificationError:
         return "Invalid signature", 400
 
-    # Handle events
+    # --- idempotency guard ---
+    if ProcessedEvent.query.filter_by(event_id=event["id"]).first():
+        return jsonify(ok=True)  # Already processed
+
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
-        user_id = session["metadata"].get("user_id")
-        qty = session["amount_total"] // int(session["metadata"]["price_per_token_cents"])
-        user = User.query.get(user_id)
-        if user:
-            user.tokensTotal = (user.tokensTotal or 0) + qty
-            db.session.commit()
-            current_app.logger.info(f"Added {qty} tokens to user {user.username}")
 
-    return jsonify(success=True)
+        # fetch line items to derive token quantity robustly
+        try:
+            line_items = stripe.checkout.Session.list_line_items(session["id"], limit=100)
+            qty = sum(li["quantity"] or 0 for li in line_items["data"])
+        except Exception:
+            current_app.logger.exception("Failed to fetch line items")
+            qty = 0
+
+        user_id = session.get("metadata", {}).get("user_id")
+        if user_id and qty > 0:
+            user = User.query.get(int(user_id))
+            if user:
+                user.tokensTotal = int(user.tokensTotal or 0) + qty
+                db.session.add(ProcessedEvent(event_id=event["id"]))
+                db.session.commit()
+                current_app.logger.info(f"Credited {qty} tokens to user {user.username}")
+                return jsonify(ok=True)
+
+    # For other events just mark processed
+    db.session.add(ProcessedEvent(event_id=event["id"]))
+    db.session.commit()
+    return jsonify(ok=True)
 
 # --------------------------------------------------------------------------- #
 # Email management                                                            #
