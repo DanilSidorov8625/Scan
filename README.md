@@ -1,5 +1,5 @@
 # 📦 Scan – Document Scanning & Management API
-
+# Written by Danil Sidorov
 **Scan** is a self-hosted Flask + Gunicorn + Docker backend for securely scanning, storing, and exporting structured form data. It’s designed for use in conjunction with a React Native frontend, with Stripe-powered billing and optional email export via Resend.
 
 ## 🚀 Features
