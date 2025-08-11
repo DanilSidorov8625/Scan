@@ -7,7 +7,7 @@ import * as Updates from 'expo-updates';
 export default function SplashScreen() {
   const router = useRouter();
   const [status, setStatus] = useState('Checking for updates…');
-
+  // splash screen needs to be in seperate file
   useEffect(() => {
     let didCancel = false;
 
